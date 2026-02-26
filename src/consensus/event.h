@@ -13,7 +13,9 @@ namespace zujan
 namespace consensus
 {
 
-// Event raised by local timers (heartbeat or election)
+/**
+ * @brief Event raised by local timers (heartbeat or election)
+ */
 struct TimeoutEvent
 {
     enum Type
@@ -24,7 +26,9 @@ struct TimeoutEvent
     Type type;
 };
 
-// Event raised when a client asks to propose a new KV
+/**
+ * @brief Event raised when a client asks to propose a new KV
+ */
 struct ClientProposalEvent
 {
     std::string                         key;
@@ -33,14 +37,18 @@ struct ClientProposalEvent
     std::shared_ptr<std::promise<bool>> promise;
 };
 
-// Event raised when a remote node requests a vote
+/**
+ * @brief Event raised when a remote node requests a vote
+ */
 struct RequestVoteEvent
 {
     proto::RequestVoteRequest                       request;
     std::function<void(proto::RequestVoteResponse)> callback;
 };
 
-// Event raised when a remote node replies to OUR vote request
+/**
+ * @brief Event raised when a remote node replies to OUR vote request
+ */
 struct RequestVoteResponseEvent
 {
     uint64_t                   peer_id;
@@ -48,14 +56,18 @@ struct RequestVoteResponseEvent
     bool                       rpc_success;
 };
 
-// Event raised when a remote node sends an AppendEntries RPC
+/**
+ * @brief Event raised when a remote node sends an AppendEntries RPC
+ */
 struct AppendEntriesEvent
 {
     proto::AppendEntriesRequest                       request;
     std::function<void(proto::AppendEntriesResponse)> callback;
 };
 
-// Event raised when a remote node replies to OUR AppendEntries RPC
+/**
+ * @brief Event raised when a remote node replies to OUR AppendEntries RPC
+ */
 struct AppendEntriesResponseEvent
 {
     uint64_t                     peer_id;
@@ -64,15 +76,18 @@ struct AppendEntriesResponseEvent
     uint64_t                     sent_last_index;
 };
 
-// Event raised when async disk I/O completes (Decouples disk from state machine
-// network)
+/**
+ * @brief Event raised when async disk I/O completes (Decouples disk from state machine network)
+ */
 struct DiskWriteCompleteEvent
 {
     uint64_t last_index;
     bool     success;
 };
 
-// The generic variant capable of holding any actionable event for the Raft loop
+/**
+ * @brief The generic variant capable of holding any actionable event for the Raft loop
+ */
 using RaftEvent = std::variant<TimeoutEvent, ClientProposalEvent, RequestVoteEvent, AppendEntriesEvent,
                                RequestVoteResponseEvent, AppendEntriesResponseEvent>;
 

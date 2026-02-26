@@ -28,19 +28,31 @@ public:
     MemTable(const MemTable &) = delete;
     MemTable &operator=(const MemTable &) = delete;
 
-    // Add an entry into memtable that maps key to value.
+    /**
+     * @brief Add an entry into memtable that maps key to value.
+     * @param key The key to insert
+     * @param value The value to insert
+     */
     void Put(std::string_view key, std::string_view value);
 
-    // If memtable contains a value for key, return it.
+    /**
+     * @brief If memtable contains a value for key, return it.
+     * @param key The key to lookup
+     * @return std::optional<std::string> Value if found, std::nullopt otherwise
+     */
     std::optional<std::string> Get(std::string_view key) const;
 
-    // Add a tombstone for key.
+    /**
+     * @brief Add a tombstone for key.
+     * @param key The key to mark as deleted
+     */
     void Delete(std::string_view key);
 
+    /**
+     * @brief Estimate the memory size of the MemTable
+     * @return size_t Estimated size in bytes
+     */
     size_t EstimateSize() const;
-
-    // No clear method, as Arena is freed on destruction. Creates a new MemTable
-    // instead.
 
 private:
     struct KeyComparator

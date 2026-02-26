@@ -8,9 +8,11 @@ namespace zujan
 namespace storage
 {
 
-// Standard lower-level encoding/decoding implementations.
-// These are essential for keeping our data structures and SSTables compact
-// by taking advantage of variable-length integer encoding.
+/**
+ * @brief Standard lower-level encoding/decoding implementations.
+ * These are essential for keeping our data structures and SSTables compact
+ * by taking advantage of variable-length integer encoding.
+ */
 
 void PutFixed32(std::string *dst, uint32_t value);
 void PutFixed64(std::string *dst, uint64_t value);

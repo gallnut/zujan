@@ -13,9 +13,17 @@ namespace zujan
 namespace storage
 {
 
+/**
+ * @brief Log-Structured Merge-Tree (LSM-Tree) based key-value store implementation
+ */
 class LSMStore : public KVStore
 {
 public:
+    /**
+     * @brief Open or create an LSMStore at the specified directory
+     * @param dir The directory path for the store
+     * @return std::expected<std::unique_ptr<LSMStore>, Error> The opened store or error
+     */
     static std::expected<std::unique_ptr<LSMStore>, Error> Open(const std::string &dir = ".") noexcept;
 
     explicit LSMStore(const std::string &dir);

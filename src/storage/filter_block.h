@@ -17,8 +17,22 @@ class FilterBlockBuilder
 public:
     explicit FilterBlockBuilder(const BloomFilterPolicy *policy);
 
-    void             StartBlock(uint64_t block_offset);
-    void             AddKey(std::string_view key);
+    /**
+     * @brief Start a new filter block
+     * @param block_offset The current block offset
+     */
+    void StartBlock(uint64_t block_offset);
+
+    /**
+     * @brief Add a key to the current filter block
+     * @param key The key to add
+     */
+    void AddKey(std::string_view key);
+
+    /**
+     * @brief Finish building the filter block
+     * @return std::string_view The generated filter block contents
+     */
     std::string_view Finish();
 
 private:
@@ -38,8 +52,21 @@ private:
 class FilterBlockReader
 {
 public:
-    // REQUIRES: "contents" and *policy must stay live while *this is live.
+    /**
+     * @brief Construct a FilterBlockReader
+     * REQUIRES: "contents" and *policy must stay live while *this is live.
+     *
+     * @param policy The BloomFilterPolicy used to generate the filter
+     * @param contents The filter block contents
+     */
     FilterBlockReader(const BloomFilterPolicy *policy, std::string_view contents);
+
+    /**
+     * @brief Check if a key may match the filter at the given block offset
+     * @param block_offset The block offset to check
+     * @param key The key to look for
+     * @return bool True if the key may be present, false if definitely not
+     */
     bool KeyMayMatch(uint64_t block_offset, std::string_view key);
 
 private:

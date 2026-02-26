@@ -17,22 +17,38 @@ private:
     struct Node;
 
 public:
-    // Create a new SkipList object that will use "cmp" for comparing keys,
-    // and will allocate memory using "*arena". Objects allocated in the arena
-    // must remain allocated for the lifetime of the skiplist object.
+    /**
+     * @brief Create a new SkipList object that will use "cmp" for comparing keys,
+     * and will allocate memory using "*arena". Objects allocated in the arena
+     * must remain allocated for the lifetime of the skiplist object.
+     *
+     * @param cmp Comparator to use for keys
+     * @param arena Arena for memory allocation
+     */
     explicit SkipList(Comparator cmp, Arena *arena);
 
     SkipList(const SkipList &) = delete;
     SkipList &operator=(const SkipList &) = delete;
 
-    // Insert key into the list.
-    // REQUIRES: nothing that compares equal to key is currently in the list.
+    /**
+     * @brief Insert key into the list.
+     * REQUIRES: nothing that compares equal to key is currently in the list.
+     *
+     * @param key The key to insert
+     */
     void Insert(const Key &key);
 
-    // Returns true iff an entry that compares equal to key is in the list.
+    /**
+     * @brief Returns true if an entry that compares equal to key is in the list.
+     *
+     * @param key The key to check for
+     * @return bool True if key is present, false otherwise
+     */
     bool Contains(const Key &key) const;
 
-    // Iteration over the contents of a skip list
+    /**
+     * @brief Iteration over the contents of a skip list
+     */
     class Iterator
     {
     public:

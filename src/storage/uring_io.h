@@ -14,6 +14,9 @@ namespace zujan
 namespace storage
 {
 
+/**
+ * @brief io_uring based asynchronous I/O context implementation
+ */
 class URingIOContext : public IOContext
 {
 public:
@@ -25,7 +28,6 @@ public:
 
     std::expected<void, Error> Init() noexcept override;
 
-    // Core operations wrapper
     std::expected<int, Error> ReadAligned(int fd, std::span<char> buf, off_t offset) noexcept override;
     std::expected<int, Error> WriteAligned(int fd, std::span<const char> buf, off_t offset) noexcept override;
 

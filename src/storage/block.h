@@ -12,7 +12,10 @@ namespace storage
 class Block
 {
 public:
-    // Initialize the block with the specified contents.
+    /**
+     * @brief Initialize the block with the specified contents.
+     * @param contents The block contents
+     */
     explicit Block(std::string_view contents);
 
     ~Block() = default;

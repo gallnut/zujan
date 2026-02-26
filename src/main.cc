@@ -1,18 +1,18 @@
 #include <csignal>
 #include <cstdlib>
 #include <future>
-#include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "consensus/raft.h"
+#include "utils/logger.h"
 
 std::promise<void> exit_signal;
 
 void SignalHandler(int signum)
 {
-    std::cout << "Interrupt signal (" << signum << ") received.\n";
+    Z_LOG_INFO("Interrupt signal ({}) received.", signum);
     try
     {
         exit_signal.set_value();
@@ -29,7 +29,7 @@ int main(int argc, char* argv[])
 
     if (!env_id)
     {
-        std::cerr << "Error: RAFT_NODE_ID environment variable not set.\n";
+        Z_LOG_FATAL("Error: RAFT_NODE_ID environment variable not set.");
         return 1;
     }
 
@@ -49,7 +49,8 @@ int main(int argc, char* argv[])
         }
     }
 
-    std::cout << "Starting Raft Node " << node_id << " with " << peers.size() << " peers.\n";
+    zujan::utils::AsyncLogger::GetInstance().Start();
+    Z_LOG_INFO("Starting Raft Node {} with {} peers.", node_id, peers.size());
 
     // Setup signal handlers
     std::signal(SIGINT, SignalHandler);
@@ -63,9 +64,9 @@ int main(int argc, char* argv[])
     auto future = exit_signal.get_future();
     future.wait();
 
-    std::cout << "Stopping Raft Node...\n";
+    Z_LOG_INFO("Stopping Raft Node...");
     node.Stop();
-    std::cout << "Raft Node stopped.\n";
+    Z_LOG_INFO("Raft Node stopped.");
 
     return 0;
 }

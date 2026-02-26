@@ -2,10 +2,10 @@
 
 #include <grpcpp/grpcpp.h>
 
-#include <iostream>
 #include <random>
 
 #include "raft_service.h"
+#include "utils/logger.h"
 
 namespace zujan
 {
@@ -20,7 +20,7 @@ RaftNode::RaftNode(uint64_t id, const std::vector<std::string> &peer_addresses)
     auto init_res = io_ctx_->Init();
     if (!init_res)
     {
-        std::cerr << "Failed to init PosixIOContext: " << init_res.error().message << std::endl;
+        Z_LOG_ERROR("Failed to init PosixIOContext: {}", init_res.error().message);
     }
 
     std::string meta_file = "raft_meta_" + std::to_string(id_) + ".dat";
@@ -43,7 +43,7 @@ RaftNode::RaftNode(uint64_t id, const std::vector<std::string> &peer_addresses)
     auto        sm_res = storage::LSMStore::Open(lsm_dir);
     if (!sm_res)
     {
-        std::cerr << "Failed to open LSMStore state machine: " << sm_res.error().message << std::endl;
+        Z_LOG_ERROR("Failed to open LSMStore state machine: {}", sm_res.error().message);
     }
     else
     {
@@ -80,7 +80,7 @@ void RaftNode::Start()
         builder.RegisterService(kv_service_.get());
         grpc_server_ = builder.BuildAndStart();
 
-        std::cout << "RaftNode [" << id_ << "] gRPC listening on " << server_address << std::endl;
+        Z_LOG_INFO("RaftNode [{}] gRPC listening on {}", id_, server_address);
     }
 }
 
@@ -198,8 +198,7 @@ void RaftNode::HandleTimeout(const TimeoutEvent &e)
 {
     if (e.type == TimeoutEvent::Election)
     {
-        std::cout << "Node " << id_ << " election timeout! Becoming candidate for term " << current_term_ + 1
-                  << std::endl;
+        Z_LOG_INFO("Node {} election timeout! Becoming candidate for term {}", id_, current_term_ + 1);
         BecomeCandidate();
     }
     else
@@ -230,7 +229,7 @@ void RaftNode::HandleRequestVoteResponse(const RequestVoteResponseEvent &e)
         int majority = (peer_addresses_.size() + 1) / 2 + 1;
         if (votes_received_ >= majority)
         {
-            std::cout << "Node " << id_ << " won election for term " << current_term_ << "!" << std::endl;
+            Z_LOG_INFO("Node {} won election for term {}!", id_, current_term_);
             BecomeLeader();
         }
     }
@@ -249,8 +248,8 @@ void RaftNode::HandleAppendEntriesResponse(const AppendEntriesResponseEvent &e)
     if (e.response.success())
     {
         if (e.sent_last_index > 0)
-            std::cout << "Leader " << id_ << " got SUCCESS AppendEntries from peer " << e.peer_id << " up to index "
-                      << e.sent_last_index << std::endl;
+            Z_LOG_INFO("Leader {} got SUCCESS AppendEntries from peer {} up to index {}", id_, e.peer_id,
+                       e.sent_last_index);
         if (next_index_.size() > e.peer_id && match_index_.size() > e.peer_id)
         {
             match_index_[e.peer_id] = std::max(match_index_[e.peer_id], e.sent_last_index);
@@ -265,15 +264,13 @@ void RaftNode::HandleAppendEntriesResponse(const AppendEntriesResponseEvent &e)
                 auto entry_res = raft_log_->Get(N);
                 if (!entry_res)
                 {
-                    std::cout << "Leader " << id_ << " failed to Get(" << N << "): " << entry_res.error().message
-                              << std::endl;
+                    Z_LOG_ERROR("Leader {} failed to Get({}): {}", id_, N, entry_res.error().message);
                     continue;
                 }
                 if (entry_res->term() != current_term_)
                 {
-                    std::cout << "Leader " << id_ << " skipped index " << N
-                              << " due to different term: " << entry_res->term() << " != " << current_term_
-                              << std::endl;
+                    Z_LOG_WARN("Leader {} skipped index {} due to different term: {} != {}", id_, N, entry_res->term(),
+                               current_term_);
                     continue;
                 }
 
@@ -287,7 +284,7 @@ void RaftNode::HandleAppendEntriesResponse(const AppendEntriesResponseEvent &e)
                 if (match_count >= majority)
                 {
                     commit_index_ = N;
-                    std::cout << "Leader " << id_ << " advanced commit_index to " << commit_index_ << std::endl;
+                    Z_LOG_INFO("Leader {} advanced commit_index to {}", id_, commit_index_);
                     ApplyCommittedLogs();
                     break;
                 }
@@ -313,7 +310,7 @@ void RaftNode::HandleClientProposal(const ClientProposalEvent &e)
         return;
     }
 
-    std::cout << "Leader " << id_ << " received client proposal: " << e.key << "=" << e.value << std::endl;
+    Z_LOG_INFO("Leader {} received client proposal: {}={}", id_, e.key, e.value);
 
     // 1. Prepare LogEntry
     uint64_t        next_idx = (raft_log_ ? raft_log_->LastIndex() : 0) + 1;
@@ -404,8 +401,8 @@ void RaftNode::HandleAppendEntries(const AppendEntriesEvent &e)
 
     if (e.request.entries_size() > 0)
     {
-        std::cout << "Node " << id_ << " received " << e.request.entries_size() << " entries from Leader "
-                  << e.request.leader_id() << " (prev_idx=" << e.request.prev_log_index() << ")" << std::endl;
+        Z_LOG_INFO("Node {} received {} entries from Leader {} (prev_idx={})", id_, e.request.entries_size(),
+                   e.request.leader_id(), e.request.prev_log_index());
     }
 
     // Log Matching
@@ -576,8 +573,7 @@ void RaftNode::BroadcastRequestVote()
 
                 if (!status.ok())
                 {
-                    std::cerr << "RequestVote to peer " << peer_id << " failed: " << status.error_message()
-                              << std::endl;
+                    Z_LOG_ERROR("RequestVote to peer {} failed: {}", peer_id, status.error_message());
                 }
 
                 RequestVoteResponseEvent e;
@@ -638,8 +634,8 @@ void RaftNode::BroadcastAppendEntries()
                 grpc::Status                 status = stub->AppendEntries(&context, req, &resp);
                 if (!status.ok())
                 {
-                    std::cerr << "AppendEntries to peer " << peer_id << " failed: " << status.error_code() << " - "
-                              << status.error_message() << std::endl;
+                    Z_LOG_ERROR("AppendEntries to peer {} failed: {} - {}", peer_id,
+                                static_cast<int>(status.error_code()), status.error_message());
                 }
 
                 AppendEntriesResponseEvent e;
@@ -668,15 +664,13 @@ void RaftNode::ApplyCommittedLogs()
                 if (entry.type() == proto::LogEntry::PUT)
                 {
                     auto res = state_machine_->Put(entry.key(), entry.value());
-                    std::cout << "Node " << id_ << " applied PUT: " << entry.key() << "=" << entry.value() << " (index "
-                              << last_applied_ << ")" << std::endl;
+                    Z_LOG_INFO("Node {} applied PUT: {}={} (index {})", id_, entry.key(), entry.value(), last_applied_);
                     (void)res;
                 }
                 else if (entry.type() == proto::LogEntry::DELETE)
                 {
                     auto res = state_machine_->Delete(entry.key());
-                    std::cout << "Node " << id_ << " applied DELETE: " << entry.key() << " (index " << last_applied_
-                              << ")" << std::endl;
+                    Z_LOG_INFO("Node {} applied DELETE: {} (index {})", id_, entry.key(), last_applied_);
                     (void)res;
                 }
 

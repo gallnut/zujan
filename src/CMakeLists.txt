@@ -29,10 +29,11 @@ add_library(zujan_proto STATIC
 target_include_directories(zujan_proto PUBLIC "${PROTO_OUT_DIR}" "${PROJECT_SOURCE_DIR}/proto")
 target_link_libraries(zujan_proto PUBLIC protobuf::libprotobuf gRPC::grpc++)
 
+add_subdirectory(utils)
 add_subdirectory(storage)
 add_subdirectory(consensus)
 
 add_executable(zujan main.cc)
 
 target_include_directories(zujan PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include "${PROTO_OUT_DIR}")
-target_link_libraries(zujan PRIVATE zujan_raft zujan_storage zujan_proto)
+target_link_libraries(zujan PRIVATE zujan_raft zujan_storage zujan_proto zujan_utils)

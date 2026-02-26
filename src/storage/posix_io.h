@@ -9,7 +9,9 @@ namespace zujan
 namespace storage
 {
 
-// Fallback IO implementation for systems without io_uring
+/**
+ * @brief Fallback IO implementation for systems without io_uring
+ */
 class PosixIOContext : public IOContext
 {
 public:

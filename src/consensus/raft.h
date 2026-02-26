@@ -43,15 +43,25 @@ public:
     RaftNode(uint64_t id, const std::vector<std::string> &peer_addresses);
     ~RaftNode();
 
-    // Start the Raft node (EventLoop and gRPC Server)
+    /**
+     * @brief Start the Raft node (EventLoop and gRPC Server)
+     */
     void Start();
 
-    // Stop the Raft node
+    /**
+     * @brief Stop the Raft node
+     */
     void Stop();
 
     bool IsLeader() const { return state_ == RaftState::Leader; }
 
-    // Propose a command to the state machine
+    /**
+     * @brief Propose a command to the state machine
+     * @param key The key for the operation
+     * @param value The value to insert if not a delete
+     * @param is_delete Whether this proposal is a deletion
+     * @return std::future<bool> Future indicating cluster-wide consensus success
+     */
     std::future<bool> Propose(const std::string &key, const std::string &value, bool is_delete = false);
 
     std::expected<std::optional<std::string>, storage::Error> GetKV(const std::string &key);

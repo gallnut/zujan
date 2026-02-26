@@ -9,11 +9,13 @@ namespace zujan
 namespace storage
 {
 
-// Arena provides a fast, fragmentation-free memory allocator for small
-// allocations. It allocates memory in large blocks and doles out small chunks.
-// It is not thread-safe for concurrent allocations, which is aligned with our
-// single-writer SkipList design. The memory is freed all at once when the Arena
-// is destroyed.
+/**
+ * @brief Arena provides a fast, fragmentation-free memory allocator for small
+ * allocations. It allocates memory in large blocks and doles out small chunks.
+ * It is not thread-safe for concurrent allocations, which is aligned with our
+ * single-writer SkipList design. The memory is freed all at once when the Arena
+ * is destroyed.
+ */
 class Arena
 {
 public:
@@ -24,14 +26,24 @@ public:
     Arena(const Arena &) = delete;
     Arena &operator=(const Arena &) = delete;
 
-    // Return a pointer to a newly allocated memory block of "bytes" bytes.
+    /**
+     * @brief Return a pointer to a newly allocated memory block of "bytes" bytes.
+     * @param bytes Number of bytes to allocate
+     * @return char* Pointer to the allocated memory block
+     */
     char *Allocate(size_t bytes);
 
-    // Allocate memory with the normal alignment guarantees provided by malloc
+    /**
+     * @brief Allocate memory with the normal alignment guarantees provided by malloc
+     * @param bytes Number of bytes to allocate
+     * @return char* Pointer to the aligned allocated memory block
+     */
     char *AllocateAligned(size_t bytes);
 
-    // Returns an estimate of the total memory usage of data allocated
-    // by the arena.
+    /**
+     * @brief Returns an estimate of the total memory usage of data allocated by the arena.
+     * @return size_t Estimated memory usage in bytes
+     */
     size_t MemoryUsage() const { return memory_usage_.load(std::memory_order_relaxed); }
 
 private:

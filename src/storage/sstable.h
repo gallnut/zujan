@@ -25,16 +25,26 @@ struct ReadOptions
 class SSTable
 {
 public:
-    // Attempt to open the table that is stored in the file with the specified
-    // size. We don't have file size easily accessible here without stat, so we
-    // can require it or figure it out inside Open. For simplicity we let Open
-    // figure it out or pass it in.
+    /**
+     * @brief Attempt to open the table that is stored in the file with the specified size.
+     *
+     * @param options The table builder options
+     * @param io_ctx The IO context
+     * @param filepath The path to the SSTable file
+     * @return std::expected<std::unique_ptr<SSTable>, Error> The opened SSTable or error
+     */
     static std::expected<std::unique_ptr<SSTable>, Error> Open(const TableBuilderOptions &options, IOContext &io_ctx,
                                                                const std::string &filepath);
 
     ~SSTable();
 
-    // Searches for a key within this SSTable
+    /**
+     * @brief Searches for a key within this SSTable
+     *
+     * @param options Read options
+     * @param key The key to search for
+     * @return std::expected<std::optional<std::string>, Error> Value if found, std::nullopt if not, or error
+     */
     std::expected<std::optional<std::string>, Error> Get(const ReadOptions &options, std::string_view key) noexcept;
 
 private:
@@ -58,7 +68,9 @@ private:
     void operator=(const SSTable &) = delete;
 };
 
-// Manages levels, overlaps, and caching for SSTables
+/**
+ * @brief Manages levels, overlaps, and caching for SSTables
+ */
 class SSTableManager
 {
 public:

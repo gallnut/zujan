@@ -14,14 +14,28 @@ public:
     explicit BloomFilterPolicy(int bits_per_key);
     ~BloomFilterPolicy() = default;
 
-    // Name of the filter policy. Used for compatibility checks.
+    /**
+     * @brief Name of the filter policy. Used for compatibility checks.
+     * @return const char* The policy name
+     */
     const char *Name() const;
 
-    // Append a filter representing a set of keys to the dst string.
-    // The given keys must be sorted and unique.
+    /**
+     * @brief Append a filter representing a set of keys to the dst string.
+     * The given keys must be sorted and unique.
+     *
+     * @param keys The set of keys to add to the filter
+     * @param dst The destination string to append the filter to
+     */
     void CreateFilter(const std::vector<std::string_view> &keys, std::string *dst) const;
 
-    // Return true if the key may be in the filter, false if it's definitely not.
+    /**
+     * @brief Return true if the key may be in the filter, false if it's definitely not.
+     *
+     * @param key The key to check
+     * @param bloom_filter The filter string to check against
+     * @return bool True if key may match, false if it definitely does not
+     */
     bool KeyMayMatch(std::string_view key, std::string_view bloom_filter) const;
 
 private:

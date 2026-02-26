@@ -12,9 +12,11 @@ namespace zujan
 namespace consensus
 {
 
-// A lightweight persistence component for Raft's hard state.
-// Responsible for durably storing `currentTerm` and `votedFor`
-// to prevent split-brain after crashes.
+/**
+ * @brief A lightweight persistence component for Raft's hard state.
+ * Responsible for durably storing `currentTerm` and `votedFor`
+ * to prevent split-brain after crashes.
+ */
 class RaftMeta
 {
 public:
@@ -26,7 +28,12 @@ public:
     RaftMeta(const RaftMeta &) = delete;
     RaftMeta &operator=(const RaftMeta &) = delete;
 
-    // Persist the current term and voted_for value to disk
+    /**
+     * @brief Persist the current term and voted_for value to disk
+     * @param current_term The current Raft term
+     * @param voted_for The ID of the node voted for in this term
+     * @return std::expected<void, storage::Error> Success or error status
+     */
     std::expected<void, storage::Error> Save(uint64_t current_term, uint64_t voted_for);
 
     uint64_t CurrentTerm() const { return current_term_; }

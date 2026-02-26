@@ -23,37 +23,65 @@ struct TableBuilderOptions
     size_t                                   block_size = 4096;
 };
 
-// A TableBuilder is used to construct a Table (SSTable) file.
+/**
+ * @brief A TableBuilder is used to construct a Table (SSTable) file.
+ */
 class TableBuilder
 {
 public:
-    // Create a builder that will append to the given IOContext and file
-    // descriptor.
+    /**
+     * @brief Create a builder that will append to the given IOContext and file descriptor.
+     *
+     * @param options Table builder options
+     * @param io_ctx IO context to use
+     * @param fd File descriptor to write to
+     */
     TableBuilder(const TableBuilderOptions &options, IOContext &io_ctx, int fd);
     ~TableBuilder();
 
-    // Change the options used by this builder.
-    // REQUIRES: No keys have been added yet.
+    /**
+     * @brief Change the options used by this builder.
+     * REQUIRES: No keys have been added yet.
+     *
+     * @param options The new options
+     */
     void ChangeOptions(const TableBuilderOptions &options);
 
-    // Add key,value to the table being constructed.
-    // REQUIRES: key is after any previously added key
+    /**
+     * @brief Add key,value to the table being constructed.
+     * REQUIRES: key is after any previously added key
+     *
+     * @param key The key to add
+     * @param value The value to add
+     */
     void Add(std::string_view key, std::string_view value);
 
-    // Advanced operation: flush any buffered key/value pairs to file.
-    // Can be used to ensure that two adjacent entries never live in
-    // the same data block.
+    /**
+     * @brief Advanced operation: flush any buffered key/value pairs to file.
+     * Can be used to ensure that two adjacent entries never live in
+     * the same data block.
+     */
     void Flush();
 
-    // Finish building the table. Stops using the file passed to the
-    // constructor after this function returns.
-    // REQUIRES: Finish(), Abandon() have not been called
+    /**
+     * @brief Finish building the table. Stops using the file passed to the
+     * constructor after this function returns.
+     * REQUIRES: Finish(), Abandon() have not been called
+     *
+     * @return std::expected<void, Error> Success or error status
+     */
     std::expected<void, Error> Finish();
 
-    // Number of calls to Add() so far.
+    /**
+     * @brief Number of calls to Add() so far.
+     * @return uint64_t The number of entries
+     */
     uint64_t NumEntries() const;
 
-    // Size of the file generated so far.
+    /**
+     * @brief Size of the file generated so far.
+     * @return uint64_t The file size in bytes
+     */
     uint64_t FileSize() const;
 
 private:

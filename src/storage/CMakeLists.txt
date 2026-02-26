@@ -18,4 +18,4 @@ add_library(zujan_storage STATIC
 )
 
 target_include_directories(zujan_storage PUBLIC ${PROJECT_SOURCE_DIR}/src)
-target_link_libraries(zujan_storage PUBLIC PkgConfig::uring)
+target_link_libraries(zujan_storage PUBLIC PkgConfig::uring zujan_utils)

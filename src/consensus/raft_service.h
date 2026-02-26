@@ -8,9 +8,11 @@ namespace zujan
 namespace consensus
 {
 
-// gRPC Service implementation for the Raft node.
-// This bridges the synchronous gRPC threadpool handlers
-// with the asynchronous lock-free lock loop of RaftNode.
+/**
+ * @brief gRPC Service implementation for the Raft node.
+ * This bridges the synchronous gRPC threadpool handlers
+ * with the asynchronous lock-free lock loop of RaftNode.
+ */
 class RaftServiceImpl final : public proto::RaftService::Service
 {
 public:
@@ -27,7 +29,9 @@ private:
     RaftNode *node_;
 };
 
-// gRPC Service implementation for the Client KV API
+/**
+ * @brief gRPC Service implementation for the Client KV API
+ */
 class KVServiceImpl final : public proto::KVService::Service
 {
 public:
