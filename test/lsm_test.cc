@@ -1,35 +1,40 @@
-#include "storage/lsm_store.h"
 #include <gtest/gtest.h>
 
-namespace zujan {
-namespace storage {
-namespace {
+#include "storage/lsm_store.h"
 
-TEST(LSMTest, PutAndGet) {
-  auto store_res = LSMStore::Open();
-  ASSERT_TRUE(store_res) << "Failed to open LSMStore";
-  auto store = std::move(*store_res);
+namespace zujan
+{
+namespace storage
+{
+namespace
+{
 
-  auto put_err = store->Put("key1", "value1");
-  EXPECT_TRUE(put_err);
+TEST(LSMTest, PutAndGet)
+{
+    auto store_res = LSMStore::Open();
+    ASSERT_TRUE(store_res) << "Failed to open LSMStore";
+    auto store = std::move(*store_res);
 
-  auto get_err = store->Get("key1");
-  EXPECT_TRUE(get_err);
-  EXPECT_TRUE(get_err->has_value());
-  EXPECT_EQ(get_err->value(), "value1");
+    auto put_err = store->Put("key1", "value1");
+    EXPECT_TRUE(put_err);
 
-  get_err = store->Get("key2");
-  EXPECT_TRUE(get_err);
-  EXPECT_FALSE(get_err->has_value());
+    auto get_err = store->Get("key1");
+    EXPECT_TRUE(get_err);
+    EXPECT_TRUE(get_err->has_value());
+    EXPECT_EQ(get_err->value(), "value1");
 
-  auto del_err = store->Delete("key1");
-  EXPECT_TRUE(del_err);
+    get_err = store->Get("key2");
+    EXPECT_TRUE(get_err);
+    EXPECT_FALSE(get_err->has_value());
 
-  get_err = store->Get("key1");
-  EXPECT_TRUE(get_err);
-  EXPECT_FALSE(get_err->has_value());
+    auto del_err = store->Delete("key1");
+    EXPECT_TRUE(del_err);
+
+    get_err = store->Get("key1");
+    EXPECT_TRUE(get_err);
+    EXPECT_FALSE(get_err->has_value());
 }
 
-} // namespace
-} // namespace storage
-} // namespace zujan
+}  // namespace
+}  // namespace storage
+}  // namespace zujan

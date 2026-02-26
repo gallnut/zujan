@@ -3,3 +3,8 @@ build/
 .cache/
 bin/
 lib/
+test_venv/
+test/__pycache__/
+raft_lsm_*/
+raft_log_*.dat
+raft_meta_*.dat
