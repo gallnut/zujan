@@ -6,17 +6,13 @@
 #include <vector>
 
 #include "memtable.h"
+#include "write_batch.h"
+#include "write_batch_internal.h"
 
 namespace zujan
 {
 namespace storage
 {
-
-enum class EntryType : uint8_t
-{
-    PUT = 0,
-    DELETE = 1
-};
 
 WAL::WAL(IOContext &io_ctx, const std::string &filepath) : io_ctx_(io_ctx), filepath_(filepath)
 {
@@ -36,38 +32,17 @@ WAL::~WAL()
     }
 }
 
-std::expected<void, Error> WAL::AppendPut(const std::string &key, const std::string &value) noexcept
+std::expected<void, Error> WAL::Append(const WriteBatch &batch) noexcept
 {
     if (fd_ < 0) return std::unexpected(Error{ErrorCode::SystemError, "bad file descriptor"});
 
     std::vector<char> buffer;
-    EntryType         type = EntryType::PUT;
-    uint32_t          klen = key.size();
-    uint32_t          vlen = value.size();
+    uint32_t          len = batch.ApproximateSize();
+    buffer.insert(buffer.end(), reinterpret_cast<char *>(&len), reinterpret_cast<char *>(&len) + 4);
 
-    buffer.push_back(static_cast<char>(type));
-    buffer.insert(buffer.end(), reinterpret_cast<char *>(&klen), reinterpret_cast<char *>(&klen) + 4);
-    buffer.insert(buffer.end(), key.begin(), key.end());
-    buffer.insert(buffer.end(), reinterpret_cast<char *>(&vlen), reinterpret_cast<char *>(&vlen) + 4);
-    buffer.insert(buffer.end(), value.begin(), value.end());
-
-    auto res = io_ctx_.WriteAligned(fd_, buffer, -1);
-    if (!res) return std::unexpected(res.error());
-
-    return {};
-}
-
-std::expected<void, Error> WAL::AppendDelete(const std::string &key) noexcept
-{
-    if (fd_ < 0) return std::unexpected(Error{ErrorCode::SystemError, "bad file descriptor"});
-
-    std::vector<char> buffer;
-    EntryType         type = EntryType::DELETE;
-    uint32_t          klen = key.size();
-
-    buffer.push_back(static_cast<char>(type));
-    buffer.insert(buffer.end(), reinterpret_cast<char *>(&klen), reinterpret_cast<char *>(&klen) + 4);
-    buffer.insert(buffer.end(), key.begin(), key.end());
+    // Use WriteBatchInternal to get the underlying buffer
+    std::string_view rep = WriteBatchInternal::Contents(&batch);
+    buffer.insert(buffer.end(), rep.begin(), rep.end());
 
     auto res = io_ctx_.WriteAligned(fd_, buffer, -1);
     if (!res) return std::unexpected(res.error());
@@ -83,35 +58,20 @@ std::expected<void, Error> WAL::Recover(MemTable &memtable) noexcept
 
     while (true)
     {
-        char    type_char;
-        ssize_t n = ::read(fd_, &type_char, 1);
-        if (n <= 0) break;
-
-        EntryType type = static_cast<EntryType>(type_char);
-        uint32_t  klen = 0;
-        n = ::read(fd_, &klen, 4);
+        uint32_t len = 0;
+        ssize_t  n = ::read(fd_, &len, 4);
         if (n < 4) break;
 
-        std::string key(klen, '\0');
-        n = ::read(fd_, key.data(), klen);
-        if (n < klen) break;
+        std::string buffer(len, '\0');
+        n = ::read(fd_, buffer.data(), len);
+        if (n < len) break;
 
-        if (type == EntryType::PUT)
-        {
-            uint32_t vlen = 0;
-            n = ::read(fd_, &vlen, 4);
-            if (n < 4) break;
+        // Deserialize and apply
+        WriteBatch batch;
+        WriteBatchInternal::SetContents(&batch, buffer);
 
-            std::string value(vlen, '\0');
-            n = ::read(fd_, value.data(), vlen);
-            if (n < vlen) break;
-
-            memtable.Put(key, value);
-        }
-        else if (type == EntryType::DELETE)
-        {
-            memtable.Delete(key);
-        }
+        // Use InsertInto which properly drives sequence numbers
+        WriteBatchInternal::InsertInto(&batch, &memtable);
     }
 
     current_offset_ = ::lseek(fd_, 0, SEEK_END);

@@ -1,6 +1,8 @@
 #include "block_builder.h"
 
 #include <cassert>
+#include <cstdio>
+#include <iostream>
 
 #include "coding.h"
 
@@ -50,8 +52,14 @@ void BlockBuilder::Add(std::string_view key, std::string_view value)
     std::string_view last_key_piece(last_key_);
     assert(!finished_);
     assert(counter_ <= options_->block_restart_interval);
-    assert(buffer_.empty() ||  // No entries yet
-           key > last_key_piece);
+    if (!(buffer_.empty() || key > last_key_piece))
+    {
+        std::cerr << "ASSERT FAILED: key='" << key << "', last_key_piece='" << last_key_piece << "'\n";
+        assert(buffer_.empty() || key > last_key_piece);
+    }
+    // The original assert is replaced by the if-block above.
+    // assert(buffer_.empty() ||  // No entries yet
+    //        key > last_key_piece);
 
     size_t shared = 0;
     if (counter_ < options_->block_restart_interval)

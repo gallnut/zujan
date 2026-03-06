@@ -13,6 +13,7 @@ namespace storage
 {
 
 class MemTable;
+class WriteBatch;
 
 /**
  * @brief Write-Ahead Log for durability using system I/O
@@ -29,19 +30,11 @@ public:
     ~WAL();
 
     /**
-     * @brief Append a Put operation to the WAL
-     * @param key The key to put
-     * @param value The value to put
+     * @brief Append a WriteBatch to the WAL
+     * @param batch The batch to put
      * @return std::expected<void, Error> Success or error status
      */
-    std::expected<void, Error> AppendPut(const std::string &key, const std::string &value) noexcept;
-
-    /**
-     * @brief Append a Delete operation to the WAL
-     * @param key The key to delete
-     * @return std::expected<void, Error> Success or error status
-     */
-    std::expected<void, Error> AppendDelete(const std::string &key) noexcept;
+    std::expected<void, Error> Append(const WriteBatch &batch) noexcept;
 
     /**
      * @brief Recovery routine to reconstruct MemTable on startup

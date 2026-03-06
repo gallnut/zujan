@@ -4,6 +4,7 @@ add_library(zujan_storage STATIC
     uring_io.cc
     posix_io.cc
     memtable.cc
+    write_batch.cc
     wal.cc
     sstable.cc
     arena.cc
@@ -15,6 +16,8 @@ add_library(zujan_storage STATIC
     block_builder.cc
     filter_block.cc
     table_builder.cc
+    version_edit.cc
+    version_set.cc
 )
 
 target_include_directories(zujan_storage PUBLIC ${PROJECT_SOURCE_DIR}/src)

@@ -1,5 +1,7 @@
 #include "table_builder.h"
 
+#include <unistd.h>
+
 #include <cassert>
 
 #include "block_builder.h"
@@ -67,11 +69,7 @@ void TableBuilder::Add(std::string_view key, std::string_view value)
     assert(!rep_->closed);
     if (rep_->pending_index_entry)
     {
-        // The previous data block was flushed, and we need to add an index entry
-        // to point to it. The key for the index entry can be any string between
-        // the last key in the previous block and the first key in the current
-        // block. For simplicity, we just use the first key in the current block.
-        rep_->index_block->Add(key, rep_->pending_index_handle);
+        rep_->index_block->Add(rep_->last_key, rep_->pending_index_handle);
         rep_->pending_index_entry = false;
     }
 
@@ -102,12 +100,9 @@ void TableBuilder::Flush()
     std::string_view raw = rep_->data_block->Finish();
 
     // Write block to file
-    auto res = rep_->io_ctx.WriteAligned(rep_->fd, std::span<const char>(raw.data(), raw.size()), rep_->offset);
-    // Simplification: Not full error handling here across WriteAligned loops
-    if (res)
+    ssize_t written = ::pwrite(rep_->fd, raw.data(), raw.size(), rep_->offset);
+    if (written > 0)
     {
-        uint64_t written = *res;
-        // Encode block handle for the index
         std::string handle_encoding;
         PutVarint64(&handle_encoding, rep_->offset);
         PutVarint64(&handle_encoding, written);
@@ -119,7 +114,6 @@ void TableBuilder::Flush()
 
     rep_->data_block->Reset();
 
-    // If using filter block, let it know we started a new block
     if (rep_->filter_block != nullptr)
     {
         rep_->filter_block->StartBlock(rep_->offset);
@@ -136,14 +130,19 @@ std::expected<void, Error> TableBuilder::Finish()
     if (rep_->filter_block != nullptr)
     {
         std::string_view filter_content = rep_->filter_block->Finish();
-        auto             res = rep_->io_ctx.WriteAligned(
-            rep_->fd, std::span<const char>(filter_content.data(), filter_content.size()), rep_->offset);
-        if (!res) return std::unexpected(res.error());
+        ssize_t          ret = ::pwrite(rep_->fd, filter_content.data(), filter_content.size(), rep_->offset);
+        if (ret < 0) return std::unexpected(Error{ErrorCode::IOError, "Write failed"});
 
         PutVarint64(&filter_block_handle, rep_->offset);
         PutVarint64(&filter_block_handle, filter_content.size());
         rep_->offset += filter_content.size();
     }
+    else
+    {
+        PutVarint64(&filter_block_handle, 0);
+        PutVarint64(&filter_block_handle, 0);
+    }
+    filter_block_handle.resize(20, 0);
 
     if (rep_->pending_index_entry)
     {
@@ -153,31 +152,28 @@ std::expected<void, Error> TableBuilder::Finish()
     }
 
     std::string_view index_content = rep_->index_block->Finish();
-    auto             idx_res = rep_->io_ctx.WriteAligned(
-        rep_->fd, std::span<const char>(index_content.data(), index_content.size()), rep_->offset);
-    if (!idx_res) return std::unexpected(idx_res.error());
+    ssize_t          ret_idx = ::pwrite(rep_->fd, index_content.data(), index_content.size(), rep_->offset);
+    if (ret_idx < 0) return std::unexpected(Error{ErrorCode::IOError, "Write failed"});
 
     std::string index_block_handle;
     PutVarint64(&index_block_handle, rep_->offset);
     PutVarint64(&index_block_handle, index_content.size());
     rep_->offset += index_content.size();
+    index_block_handle.resize(20, 0);
 
     // Footer format:
-    // filter_handle (varint64, varint64)
-    // index_handle (varint64, varint64)
-    // padding to 40 bytes
+    // filter_handle (20 bytes padded)
+    // index_handle (20 bytes padded)
     // magic number (8 bytes)
     std::string footer;
     footer.append(filter_block_handle);
     footer.append(index_block_handle);
-    footer.resize(2 * 20, 0);  // pad to 40 bytes (max 2 BlockHandles)
 
     uint64_t magic = 0xdb4775248b80fb57ull;
     PutFixed64(&footer, magic);
 
-    auto footer_res =
-        rep_->io_ctx.WriteAligned(rep_->fd, std::span<const char>(footer.data(), footer.size()), rep_->offset);
-    if (!footer_res) return std::unexpected(footer_res.error());
+    ssize_t ret_ft = ::pwrite(rep_->fd, footer.data(), footer.size(), rep_->offset);
+    if (ret_ft < 0) return std::unexpected(Error{ErrorCode::IOError, "Write failed"});
     rep_->offset += footer.size();
 
     return {};

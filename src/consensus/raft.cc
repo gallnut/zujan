@@ -171,7 +171,8 @@ std::expected<std::optional<std::string>, storage::Error> RaftNode::GetKV(const 
 {
     if (state_machine_)
     {
-        return state_machine_->Get(key);
+        storage::ReadOptions ropt;
+        return state_machine_->Get(ropt, key);
     }
     return std::unexpected(storage::Error{storage::ErrorCode::NotFound, "No statemachine"});
 }

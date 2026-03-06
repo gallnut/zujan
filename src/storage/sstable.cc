@@ -4,7 +4,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cstring>
+
 #include "coding.h"
+#include "memtable.h"
 
 namespace zujan
 {
@@ -62,11 +66,11 @@ std::expected<void, Error> SSTable::ReadFooterAndIndex()
     uint64_t index_offset, index_size;
 
     const char *p = footer_buf;
-    p = GetVarint64Ptr(p, p + 20, &filter_offset);
+    p = GetVarint64Ptr(p, footer_buf + 20, &filter_offset);
     p = GetVarint64Ptr(p, footer_buf + 20, &filter_size);
 
     const char *p2 = footer_buf + 20;
-    p2 = GetVarint64Ptr(p2, p2 + 20, &index_offset);
+    p2 = GetVarint64Ptr(p2, footer_buf + 40, &index_offset);
     p2 = GetVarint64Ptr(p2, footer_buf + 40, &index_size);
 
     // Read Filter Block
@@ -118,7 +122,7 @@ std::expected<std::unique_ptr<Block>, Error> SSTable::ReadBlock(uint64_t offset,
     return std::make_unique<HeapBlock>(buf, size);
 }
 
-std::expected<std::optional<std::string>, Error> SSTable::Get(const ReadOptions &options, std::string_view key) noexcept
+std::expected<LookupResult, Error> SSTable::Get(const ReadOptions &options, std::string_view key, uint64_t seq) noexcept
 {
     std::unique_ptr<Block::Iterator> iiter(index_block_->NewIterator());
     iiter->Seek(key);
@@ -133,7 +137,7 @@ std::expected<std::optional<std::string>, Error> SSTable::Get(const ReadOptions 
 
         if (filter_ && !filter_->KeyMayMatch(block_offset, key))
         {
-            return std::nullopt;
+            return LookupResult{};
         }
 
         Block                 *block = nullptr;
@@ -174,10 +178,25 @@ std::expected<std::optional<std::string>, Error> SSTable::Get(const ReadOptions 
         std::unique_ptr<Block::Iterator> biter(block->NewIterator());
         biter->Seek(key);
 
-        std::optional<std::string> result = std::nullopt;
+        LookupResult result;
         if (biter->Valid() && biter->key() == key)
         {
-            result = std::string(biter->value());
+            std::string_view raw = biter->value();
+            if (!raw.empty())
+            {
+                ValueType type = static_cast<ValueType>(raw[0]);
+                if (type == kTypeValue)
+                {
+                    result.found = true;
+                    result.deleted = false;
+                    result.value = std::string(raw.substr(1));
+                }
+                else if (type == kTypeDeletion)
+                {
+                    result.found = true;
+                    result.deleted = true;
+                }
+            }
         }
 
         if (cache_handle != nullptr)
@@ -187,37 +206,124 @@ std::expected<std::optional<std::string>, Error> SSTable::Get(const ReadOptions 
 
         return result;
     }
-    return std::nullopt;
+    return LookupResult{};
+}
+
+void SSTable::DumpToMap(std::map<std::string, LookupResult> &out_map) const
+{
+    std::unique_ptr<Block::Iterator> iiter(index_block_->NewIterator());
+    for (iiter->Seek(""); iiter->Valid(); iiter->Next())
+    {
+        std::string_view handle = iiter->value();
+        uint64_t         block_offset, block_size;
+        const char      *p = handle.data();
+        p = GetVarint64Ptr(p, handle.data() + handle.size(), &block_offset);
+        p = GetVarint64Ptr(p, handle.data() + handle.size(), &block_size);
+
+        auto block_res = ReadBlock(block_offset, block_size);
+        if (block_res)
+        {
+            std::unique_ptr<Block>           block = std::move(*block_res);
+            std::unique_ptr<Block::Iterator> biter(block->NewIterator());
+            for (biter->Seek(""); biter->Valid(); biter->Next())
+            {
+                std::string_view raw = biter->value();
+                if (!raw.empty())
+                {
+                    ValueType    type = static_cast<ValueType>(raw[0]);
+                    LookupResult res;
+                    res.found = true;
+                    if (type == kTypeValue)
+                    {
+                        res.deleted = false;
+                        res.value = std::string(raw.substr(1));
+                    }
+                    else
+                    {
+                        res.deleted = true;
+                    }
+                    out_map[std::string(biter->key())] = res;
+                }
+            }
+        }
+    }
 }
 
 // Manager
 SSTableManager::SSTableManager(IOContext &io_ctx, const TableBuilderOptions &opt) : io_ctx_(io_ctx), options_(opt) {}
 
-std::expected<std::optional<std::string>, Error> SSTableManager::Get(const ReadOptions &options,
-                                                                     std::string_view   key) noexcept
+std::expected<LookupResult, Error> SSTableManager::Get(const ReadOptions &options, std::string_view key,
+                                                       uint64_t seq) noexcept
 {
+    std::shared_lock<std::shared_mutex> lock(rw_lock_);
     for (const auto &level : levels_)
     {
         for (const auto &sst : level)
         {
-            auto res = sst->Get(options, key);
+            auto res = sst->Get(options, key, seq);
             if (!res) return std::unexpected(res.error());
-            if (res.value() != std::nullopt)
+            if (res.value().found)
             {
                 return res;
             }
         }
     }
-    return std::nullopt;
+    return LookupResult{};
 }
 
 void SSTableManager::AddSSTable(int level, std::string filepath)
 {
-    if (levels_.size() <= level) levels_.resize(level + 1);
     auto table_res = SSTable::Open(options_, io_ctx_, filepath);
     if (table_res)
     {
+        std::unique_lock<std::shared_mutex> lock(rw_lock_);
+        if (levels_.size() <= level) levels_.resize(level + 1);
         levels_[level].push_back(std::move(*table_res));
+    }
+}
+
+std::vector<SSTable *> SSTableManager::GetLevelSSTables(int level)
+{
+    std::shared_lock<std::shared_mutex> lock(rw_lock_);
+    std::vector<SSTable *>              result;
+    if (level < levels_.size())
+    {
+        for (const auto &table : levels_[level])
+        {
+            result.push_back(table.get());
+        }
+    }
+    return result;
+}
+
+void SSTableManager::ReplaceLevelSSTables(int level, const std::vector<SSTable *> &old_tables,
+                                          std::vector<std::string> new_filepaths)
+{
+    std::vector<std::unique_ptr<SSTable>> new_ssts;
+    for (const auto &path : new_filepaths)
+    {
+        auto table_res = SSTable::Open(options_, io_ctx_, path);
+        if (table_res)
+        {
+            new_ssts.push_back(std::move(*table_res));
+        }
+    }
+
+    std::unique_lock<std::shared_mutex> lock(rw_lock_);
+    if (levels_.size() <= level) levels_.resize(level + 1);
+
+    auto &level_tables = levels_[level];
+    for (auto old_tbl : old_tables)
+    {
+        level_tables.erase(
+            std::remove_if(level_tables.begin(), level_tables.end(),
+                           [old_tbl](const std::unique_ptr<SSTable> &tbl) { return tbl.get() == old_tbl; }),
+            level_tables.end());
+    }
+
+    for (auto &sst : new_ssts)
+    {
+        level_tables.push_back(std::move(sst));
     }
 }
 

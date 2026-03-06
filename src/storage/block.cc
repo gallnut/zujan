@@ -63,17 +63,23 @@ void Block::Iterator::SeekToRestartPoint(uint32_t index)
     restart_index_ = index;
     uint32_t offset = DecodeFixed32(data_ + restarts_ + index * sizeof(uint32_t));
     current_ = offset;
+    value_ = std::string_view();  // ensure Next works properly
     ParseNextKey();
 }
 
 void Block::Iterator::ParseNextKey()
 {
-    current_ += value_.size();
+    if (value_.data() != nullptr)
+    {
+        current_ = (value_.data() + value_.size()) - data_;
+    }
+
     if (current_ >= restarts_)
     {
         // End of block
         current_ = restarts_;
         restart_index_ = num_restarts_;
+        value_ = std::string_view();
         return;
     }
 
@@ -99,6 +105,8 @@ void Block::Iterator::ParseNextKey()
 
 void Block::Iterator::Seek(std::string_view target)
 {
+    if (num_restarts_ == 0) return;
+
     // Binary search in restart array
     uint32_t left = 0;
     uint32_t right = num_restarts_ - 1;

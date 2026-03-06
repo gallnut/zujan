@@ -1,14 +1,16 @@
 #pragma once
 
 #include <expected>
+#include <map>
 #include <memory>
-#include <optional>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
 #include "block.h"
 #include "filter_block.h"
 #include "io.h"
+#include "options.h"
 #include "table_builder.h"
 
 namespace zujan
@@ -16,10 +18,11 @@ namespace zujan
 namespace storage
 {
 
-struct ReadOptions
+struct LookupResult
 {
-    bool verify_checksums = false;
-    bool fill_cache = true;
+    bool        found = false;
+    bool        deleted = false;
+    std::string value;
 };
 
 class SSTable
@@ -43,9 +46,11 @@ public:
      *
      * @param options Read options
      * @param key The key to search for
-     * @return std::expected<std::optional<std::string>, Error> Value if found, std::nullopt if not, or error
+     * @return std::expected<LookupResult, Error> Lookup result or error
      */
-    std::expected<std::optional<std::string>, Error> Get(const ReadOptions &options, std::string_view key) noexcept;
+    std::expected<LookupResult, Error> Get(const ReadOptions &options, std::string_view key, uint64_t seq) noexcept;
+
+    void DumpToMap(std::map<std::string, LookupResult> &out_map) const;
 
 private:
     SSTable(IOContext &io_ctx, int fd, uint64_t file_size, const TableBuilderOptions &options);
@@ -77,13 +82,19 @@ public:
     explicit SSTableManager(IOContext &io_ctx, const TableBuilderOptions &opt);
     ~SSTableManager() = default;
 
-    std::expected<std::optional<std::string>, Error> Get(const ReadOptions &options, std::string_view key) noexcept;
+    std::expected<LookupResult, Error> Get(const ReadOptions &options, std::string_view key, uint64_t seq) noexcept;
 
     void AddSSTable(int level, std::string filepath);
 
+    // Compaction support
+    std::vector<SSTable *> GetLevelSSTables(int level);
+    void                   ReplaceLevelSSTables(int level, const std::vector<SSTable *> &old_tables,
+                                                std::vector<std::string> new_filepaths);
+
 private:
-    IOContext          &io_ctx_;
-    TableBuilderOptions options_;
+    mutable std::shared_mutex rw_lock_;
+    IOContext                &io_ctx_;
+    TableBuilderOptions       options_;
 
     // In a real LSM, we store metadata. Here we store loaded tables for
     // simplicity.

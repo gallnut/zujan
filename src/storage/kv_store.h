@@ -4,12 +4,15 @@
 #include <optional>
 #include <string>
 
+#include "options.h"
 #include "status.h"
 
 namespace zujan
 {
 namespace storage
 {
+
+class WriteBatch;
 
 /**
  * @brief Abstract Key-Value Store interface for the storage engine
@@ -33,7 +36,8 @@ public:
      * @param key The key to lookup
      * @return std::expected<std::optional<std::string>, Error> Value if found, std::nullopt if not, or error status
      */
-    virtual std::expected<std::optional<std::string>, Error> Get(const std::string &key) noexcept = 0;
+    virtual std::expected<std::optional<std::string>, Error> Get(const ReadOptions &options,
+                                                                 const std::string &key) noexcept = 0;
 
     /**
      * @brief Delete a key from the store
@@ -41,6 +45,20 @@ public:
      * @return std::expected<void, Error> Success or error status
      */
     virtual std::expected<void, Error> Delete(const std::string &key) noexcept = 0;
+    /**
+     * @brief Apply a batch of updates to the store
+     */
+    virtual std::expected<void, Error> Write(const WriteOptions &options, WriteBatch *updates) noexcept = 0;
+
+    /**
+     * @brief Return a handle to the current database state
+     */
+    virtual const Snapshot *GetSnapshot() = 0;
+
+    /**
+     * @brief Release a previously acquired snapshot
+     */
+    virtual void ReleaseSnapshot(const Snapshot *snapshot) = 0;
 };
 
 }  // namespace storage

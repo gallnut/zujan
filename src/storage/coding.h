@@ -61,5 +61,8 @@ const char *GetVarint64Ptr(const char *p, const char *limit, uint64_t *value);
 bool GetVarint32(std::string_view *input, uint32_t *value);
 bool GetVarint64(std::string_view *input, uint64_t *value);
 
+void PutLengthPrefixedSlice(std::string *dst, std::string_view value);
+bool GetLengthPrefixedSlice(std::string_view *input, std::string_view *result);
+
 }  // namespace storage
 }  // namespace zujan
