@@ -40,7 +40,9 @@ RaftNode::RaftNode(uint64_t id, const std::vector<std::string> &peer_addresses)
     }
 
     std::string lsm_dir = "raft_lsm_" + std::to_string(id_);
-    auto        sm_res = storage::LSMStore::Open(lsm_dir);
+    storage::LSMStoreOptions lsm_opts;
+    lsm_opts.disable_wal = true;
+    auto        sm_res = storage::LSMStore::Open(lsm_dir, lsm_opts);
     if (!sm_res)
     {
         Z_LOG_ERROR("Failed to open LSMStore state machine: {}", sm_res.error().message);
@@ -108,6 +110,11 @@ void RaftNode::RunLoop()
 {
     while (running_)
     {
+        if (!pending_proposals_batch_.empty() && (event_queue_.IsEmpty() || pending_proposals_batch_.size() >= 1000))
+        {
+            FlushProposals();
+        }
+
         auto event_opt = event_queue_.Pop();
         if (!event_opt)
         {
@@ -311,34 +318,49 @@ void RaftNode::HandleClientProposal(const ClientProposalEvent &e)
         return;
     }
 
-    Z_LOG_INFO("Leader {} received client proposal: {}={}", id_, e.key, e.value);
+    pending_proposals_batch_.push_back(e);
+}
 
-    // 1. Prepare LogEntry
-    uint64_t        next_idx = (raft_log_ ? raft_log_->LastIndex() : 0) + 1;
-    proto::LogEntry entry;
-    entry.set_term(current_term_);
-    entry.set_index(next_idx);
-    entry.set_key(e.key);
-    entry.set_value(e.value);
-    entry.set_type(e.is_delete ? proto::LogEntry::DELETE : proto::LogEntry::PUT);
+void RaftNode::FlushProposals()
+{
+    if (pending_proposals_batch_.empty()) return;
 
-    // 2. Append to local log (synchronously for now to guarantee persistence
-    // before networking)
-    if (raft_log_)
+    if (state_ != RaftState::Leader)
     {
-        [[maybe_unused]] auto res = raft_log_->Append({entry});
+        for (auto& e : pending_proposals_batch_) {
+            if (e.promise) e.promise->set_value(false);
+        }
+        pending_proposals_batch_.clear();
+        return;
     }
 
-    // 3. Update self state
-    // match_index_[self] == LastIndex
+    Z_LOG_INFO("Leader {} flushing {} proposals to Raft log", id_, pending_proposals_batch_.size());
 
-    // 4. Dispatch Network AppendEntries async
+    uint64_t next_idx = (raft_log_ ? raft_log_->LastIndex() : 0) + 1;
+    std::vector<proto::LogEntry> entries;
+    entries.reserve(pending_proposals_batch_.size());
+
+    for (auto& e : pending_proposals_batch_) {
+        proto::LogEntry entry;
+        entry.set_term(current_term_);
+        entry.set_index(next_idx);
+        entry.set_key(e.key);
+        entry.set_value(e.value);
+        entry.set_type(e.is_delete ? proto::LogEntry::DELETE : proto::LogEntry::PUT);
+        entries.push_back(std::move(entry));
+
+        if (e.promise) {
+            pending_proposals_.emplace(next_idx, std::move(*e.promise));
+        }
+        next_idx++;
+    }
+
+    if (raft_log_) {
+        [[maybe_unused]] auto res = raft_log_->Append(entries);
+    }
+
+    pending_proposals_batch_.clear();
     BroadcastAppendEntries();
-
-    if (e.promise)
-    {
-        pending_proposals_.emplace(next_idx, std::move(*e.promise));
-    }
 }
 
 void RaftNode::HandleRequestVote(const RequestVoteEvent &e)
@@ -486,6 +508,12 @@ void RaftNode::BecomeFollower(uint64_t term)
         pair.second.set_value(false);
     }
     pending_proposals_.clear();
+
+    for (auto &e : pending_proposals_batch_)
+    {
+        if (e.promise) e.promise->set_value(false);
+    }
+    pending_proposals_batch_.clear();
 }
 
 void RaftNode::BecomeCandidate()

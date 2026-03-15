@@ -19,5 +19,10 @@ struct WriteOptions
     bool sync = false;
 };
 
+struct LSMStoreOptions
+{
+    bool disable_wal = false;
+};
+
 }  // namespace storage
 }  // namespace zujan

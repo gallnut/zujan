@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -29,9 +30,9 @@ public:
      * @param dir The directory path for the store
      * @return std::expected<std::unique_ptr<LSMStore>, Error> The opened store or error
      */
-    static std::expected<std::unique_ptr<LSMStore>, Error> Open(const std::string &dir = ".") noexcept;
+    static std::expected<std::unique_ptr<LSMStore>, Error> Open(const std::string &dir = ".", const LSMStoreOptions& options = LSMStoreOptions()) noexcept;
 
-    explicit LSMStore(const std::string &dir);
+    explicit LSMStore(const std::string &dir, const LSMStoreOptions& options = LSMStoreOptions());
     ~LSMStore() override;
 
     std::expected<void, Error> Init() noexcept;
@@ -53,6 +54,20 @@ private:
     std::unique_ptr<MemTable>       imm_;  // Immutable memtable waiting for flush
     std::unique_ptr<WAL>            wal_;
     std::unique_ptr<SSTableManager> sst_manager_;
+
+    LSMStoreOptions                 options_;
+
+    // Write Group support
+    struct Writer
+    {
+        WriteBatch*                batch;
+        bool                       done;
+        std::expected<void, Error> status;
+        std::condition_variable    cv;
+
+        explicit Writer(WriteBatch* b) : batch(b), done(false) {}
+    };
+    std::deque<Writer*>     writers_;
 
     // Background Compaction
     std::mutex              mutex_;

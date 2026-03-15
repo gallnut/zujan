@@ -50,11 +50,13 @@ std::expected<void, Error> WAL::Append(const WriteBatch &batch) noexcept
     return {};
 }
 
-std::expected<void, Error> WAL::Recover(MemTable &memtable) noexcept
+std::expected<uint64_t, Error> WAL::Recover(MemTable &memtable) noexcept
 {
-    if (fd_ < 0) return {};
+    if (fd_ < 0) return 0ULL;
 
     ::lseek(fd_, 0, SEEK_SET);
+
+    uint64_t max_seq = 0;
 
     while (true)
     {
@@ -70,12 +72,20 @@ std::expected<void, Error> WAL::Recover(MemTable &memtable) noexcept
         WriteBatch batch;
         WriteBatchInternal::SetContents(&batch, buffer);
 
+        // Track max sequence
+        uint64_t seq = WriteBatchInternal::Sequence(&batch);
+        uint32_t count = WriteBatchInternal::Count(&batch);
+        if (seq + count - 1 > max_seq)
+        {
+            max_seq = seq + count - 1;
+        }
+
         // Use InsertInto which properly drives sequence numbers
         WriteBatchInternal::InsertInto(&batch, &memtable);
     }
 
     current_offset_ = ::lseek(fd_, 0, SEEK_END);
-    return {};
+    return max_seq;
 }
 
 std::expected<void, Error> WAL::Sync() noexcept

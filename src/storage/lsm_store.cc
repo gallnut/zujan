@@ -4,6 +4,9 @@
 #include <unistd.h>
 
 #include <filesystem>
+#include <algorithm>
+#include <vector>
+#include <queue>
 
 #include "uring_io.h"
 #include "write_batch.h"
@@ -14,15 +17,15 @@ namespace zujan
 namespace storage
 {
 
-std::expected<std::unique_ptr<LSMStore>, Error> LSMStore::Open(const std::string &dir) noexcept
+std::expected<std::unique_ptr<LSMStore>, Error> LSMStore::Open(const std::string &dir, const LSMStoreOptions &options) noexcept
 {
-    auto store = std::unique_ptr<LSMStore>(new LSMStore(dir));
+    auto store = std::unique_ptr<LSMStore>(new LSMStore(dir, options));
     auto res = store->Init();
     if (!res) return std::unexpected(Error{ErrorCode::IOError, "LSMStore Init failed"});
     return std::move(store);
 }
 
-LSMStore::LSMStore(const std::string &dir) : dir_(dir) { io_ctx_ = std::make_unique<URingIOContext>(); }
+LSMStore::LSMStore(const std::string &dir, const LSMStoreOptions &options) : dir_(dir), options_(options) { io_ctx_ = std::make_unique<URingIOContext>(); }
 
 std::expected<void, Error> LSMStore::Init() noexcept
 {
@@ -44,11 +47,11 @@ std::expected<void, Error> LSMStore::Init() noexcept
     // Ignore error for now if manifest not found (new DB)
 
     // Recovery Phase
-    if (rec_res)
+    if (rec_res && !options_.disable_wal)
     {
-        RecoverWAL(versions_->LogNumber());
+        std::vector<uint64_t> logs_to_recover;
 
-        // Clean up old obsolete WAL files!
+        // Clean up old obsolete WAL files and find logs to recover
         for (const auto &entry : std::filesystem::directory_iterator(dir_))
         {
             if (entry.path().extension() == ".log")
@@ -63,12 +66,22 @@ std::expected<void, Error> LSMStore::Init() noexcept
                         {
                             std::filesystem::remove(entry.path());
                         }
+                        else
+                        {
+                            logs_to_recover.push_back(num);
+                        }
                     }
                     catch (...)
                     {
                     }
                 }
             }
+        }
+
+        std::sort(logs_to_recover.begin(), logs_to_recover.end());
+        for (uint64_t num : logs_to_recover)
+        {
+            RecoverWAL(num);
         }
     }
 
@@ -86,7 +99,9 @@ std::expected<void, Error> LSMStore::Init() noexcept
     }
 
     logfile_number_ = versions_->NewFileNumber();
-    wal_ = std::make_unique<WAL>(*io_ctx_, dir_ + "/wal-" + std::to_string(logfile_number_) + ".log");
+    if (!options_.disable_wal) {
+        wal_ = std::make_unique<WAL>(*io_ctx_, dir_ + "/wal-" + std::to_string(logfile_number_) + ".log");
+    }
 
     bg_thread_ = std::thread(&LSMStore::BGWork, this);
 
@@ -115,9 +130,50 @@ std::expected<void, Error> LSMStore::Put(const std::string &key, const std::stri
 
 std::expected<void, Error> LSMStore::Write(const WriteOptions &options, WriteBatch *updates) noexcept
 {
-    std::unique_lock<std::mutex> lk(mutex_);
+    if (options_.disable_wal)
+    {
+        std::unique_lock<std::mutex> lk(mutex_);
+        // Make room for write
+        while (memtable_->EstimateSize() >= memtable_size_limit_ && imm_ != nullptr)
+        {
+            bg_cv_.wait(lk);
+        }
 
-    // Simplistic handling: wait for space
+        if (memtable_->EstimateSize() >= memtable_size_limit_)
+        {
+            imm_logfile_number_ = logfile_number_;
+            imm_ = std::move(memtable_);
+            memtable_ = std::make_unique<MemTable>();
+
+            logfile_number_ = versions_->NewFileNumber();
+
+            bg_compaction_scheduled_ = true;
+            bg_cv_.notify_one();
+        }
+
+        uint64_t seq = versions_->LastSequence() + 1;
+        WriteBatchInternal::SetSequence(updates, seq);
+        versions_->SetLastSequence(seq + WriteBatchInternal::Count(updates) - 1);
+        WriteBatchInternal::InsertInto(updates, memtable_.get());
+        
+        return {};
+    }
+
+    Writer w(updates);
+    std::unique_lock<std::mutex> lk(mutex_);
+    writers_.push_back(&w);
+
+    while (!w.done && &w != writers_.front())
+    {
+        w.cv.wait(lk);
+    }
+
+    if (w.done)
+    {
+        return w.status;
+    }
+
+    // Make room for write
     while (memtable_->EstimateSize() >= memtable_size_limit_ && imm_ != nullptr)
     {
         bg_cv_.wait(lk);
@@ -125,6 +181,7 @@ std::expected<void, Error> LSMStore::Write(const WriteOptions &options, WriteBat
 
     if (memtable_->EstimateSize() >= memtable_size_limit_)
     {
+        imm_logfile_number_ = logfile_number_;
         imm_ = std::move(memtable_);
         memtable_ = std::make_unique<MemTable>();
 
@@ -135,29 +192,60 @@ std::expected<void, Error> LSMStore::Write(const WriteOptions &options, WriteBat
         bg_cv_.notify_one();
     }
 
-    // Assign sequence number
+    // Build the Write Group
     uint64_t seq = versions_->LastSequence() + 1;
-    WriteBatchInternal::SetSequence(updates, seq);
-    uint32_t count = WriteBatchInternal::Count(updates);
-    versions_->SetLastSequence(seq + count - 1);
+    uint32_t total_count = 0;
+    WriteBatch group_batch;
+    std::vector<Writer*> group;
 
-    // Write to WAL
-    lk.unlock();  // Unlock while writing to WAL to avoid blocking reads, though our writes are currently serialized via
-                  // this mutex anyway For now, keep it simple and just write. Actually it's better to keep mutex if we
-                  // don't have a Writer queue. Let's re-acquire later or just keep the lock. Zujan's current design
-                  // locked after WAL write, but WriteBatch needs Sequence numbers which must be assigned under lock! So
-                  // we must hold lock to get seq, but writing to WAL with lock held could be slow. For simplicity, we
-                  // just keep the lock for now.
-
-    auto w_res = wal_->Append(*updates);
-    if (!w_res)
+    size_t size = 0;
+    for (auto* writer : writers_)
     {
-        return std::unexpected(Error{ErrorCode::IOError, "WAL WriteBatch failed"});
+        group.push_back(writer);
+        WriteBatchInternal::Append(&group_batch, writer->batch);
+        total_count += WriteBatchInternal::Count(writer->batch);
+        size += writer->batch->ApproximateSize();
+        
+        // Stop batching if it gets too large
+        if (size > 1 * 1024 * 1024) break; 
     }
 
-    // Insert into MemTable
-    WriteBatchInternal::InsertInto(updates, memtable_.get());
-    return {};
+    WriteBatchInternal::SetSequence(&group_batch, seq);
+    versions_->SetLastSequence(seq + total_count - 1);
+
+    lk.unlock();
+
+    // Write to WAL without holding the mutex
+    auto w_res = wal_->Append(group_batch);
+    if (!w_res)
+    {
+        w.status = std::unexpected(Error{ErrorCode::IOError, "WAL WriteBatch failed"});
+    }
+    else
+    {
+        // Insert to MemTable safely (we are the only writer since we are the Leader)
+        WriteBatchInternal::InsertInto(&group_batch, memtable_.get());
+        w.status = {};
+    }
+
+    lk.lock();
+
+    // Finish the group and wake up followers
+    for (auto* writer : group)
+    {
+        writer->done = true;
+        writer->status = w.status;
+        writer->cv.notify_one();
+        writers_.pop_front();
+    }
+
+    // Wake up next leader if any
+    if (!writers_.empty())
+    {
+        writers_.front()->cv.notify_one();
+    }
+
+    return w.status;
 }
 
 std::expected<std::optional<std::string>, Error> LSMStore::Get(const ReadOptions &options,
@@ -230,6 +318,8 @@ void LSMStore::BGWork()
 
         if (stop_bg_) break;
 
+        bg_compaction_scheduled_ = false;
+
         if (imm_ != nullptr)
         {
             lk.unlock();
@@ -241,8 +331,6 @@ void LSMStore::BGWork()
         lk.unlock();
         DoCompaction();
         lk.lock();
-
-        bg_compaction_scheduled_ = false;
     }
 }
 
@@ -289,7 +377,9 @@ void LSMStore::CompactMemTable()
         sst_manager_->AddSSTable(0, sst_path);
         imm_.reset();
 
-        std::filesystem::remove(dir_ + "/wal-" + std::to_string(old_log_number) + ".log");
+        if (!options_.disable_wal) {
+            std::filesystem::remove(dir_ + "/wal-" + std::to_string(old_log_number) + ".log");
+        }
     }
 }
 
@@ -299,9 +389,101 @@ void LSMStore::RecoverWAL(uint64_t log_number)
     if (std::filesystem::exists(wal_path))
     {
         WAL  wal_reader(*io_ctx_, wal_path);
-        auto unused = wal_reader.Recover(*memtable_);
+        auto res = wal_reader.Recover(*memtable_);
+        if (res && res.value() > versions_->LastSequence())
+        {
+            versions_->SetLastSequence(res.value());
+        }
     }
 }
+
+namespace {
+class MergingIterator {
+public:
+    MergingIterator(std::vector<std::unique_ptr<SSTableIterator>> iters) : iters_(std::move(iters)) {}
+
+    void SeekToFirst() {
+        for (auto& it : iters_) {
+            it->SeekToFirst();
+        }
+        BuildHeap();
+    }
+
+    bool Valid() const {
+        return !heap_.empty();
+    }
+
+    void Next() {
+        if (heap_.empty()) return;
+        HeapNode top = heap_.front();
+        std::pop_heap(heap_.begin(), heap_.end(), HeapComp());
+        heap_.pop_back();
+
+        top.iter->Next();
+        if (top.iter->Valid()) {
+            heap_.push_back(top);
+            std::push_heap(heap_.begin(), heap_.end(), HeapComp());
+        }
+    }
+
+    std::string_view key() const {
+        return heap_.front().iter->key();
+    }
+
+    std::string_view value() const {
+        return heap_.front().iter->value();
+    }
+
+    bool IsDeleted() const {
+        std::string_view v = value();
+        if (!v.empty() && v[0] == kTypeDeletion) {
+            return true;
+        }
+        return false;
+    }
+    
+    std::string_view RealValue() const {
+        std::string_view v = value();
+        if (!v.empty() && v[0] == kTypeValue) {
+            return v.substr(1);
+        }
+        return "";
+    }
+
+private:
+    struct HeapNode {
+        SSTableIterator* iter;
+        size_t iter_idx; 
+    };
+
+    struct HeapComp {
+        bool operator()(const HeapNode& a, const HeapNode& b) const {
+            int cmp = a.iter->key().compare(b.iter->key());
+            if (cmp != 0) {
+                // Min heap: return true if a > b (so smallest key is at top)
+                return cmp > 0;
+            }
+            // If keys are equal, we want the newer one. 
+            // In iters_, lower iter_idx corresponds to newer data.
+            // Min heap: return true if a > b. a is "greater" (less priority) if it represents older data (larger iter_idx).
+            return a.iter_idx > b.iter_idx;
+        }
+    };
+
+    void BuildHeap() {
+        heap_.clear();
+        for (size_t i = 0; i < iters_.size(); ++i) {
+            if (iters_[i]->Valid()) {
+                heap_.push_back({iters_[i].get(), i});
+            }
+        }
+        std::make_heap(heap_.begin(), heap_.end(), HeapComp());
+    }
+
+    std::vector<std::unique_ptr<SSTableIterator>> iters_;
+    std::vector<HeapNode> heap_;
+};
+} // namespace
 
 void LSMStore::DoCompaction()
 {
@@ -310,12 +492,18 @@ void LSMStore::DoCompaction()
 
     auto l1_tables = sst_manager_->GetLevelSSTables(1);
 
-    std::map<std::string, LookupResult> merged_map;
-    for (auto table : l1_tables) table->DumpToMap(merged_map);
-    for (auto table : l0_tables) table->DumpToMap(merged_map);
+    std::vector<std::unique_ptr<SSTableIterator>> iters;
+    // L0 blocks are newer. Push newest first (end of vector).
+    for (auto it = l0_tables.rbegin(); it != l0_tables.rend(); ++it) {
+        iters.push_back((*it)->NewIterator());
+    }
+    // L1 blocks are older. 
+    for (auto it = l1_tables.rbegin(); it != l1_tables.rend(); ++it) {
+        iters.push_back((*it)->NewIterator());
+    }
 
-    fprintf(stderr, "DoCompaction merged_map has %zu keys, count(key0)=%zu\n", merged_map.size(),
-            merged_map.count("key0"));
+    MergingIterator iter(std::move(iters));
+    iter.SeekToFirst();
 
     uint64_t file_number;
     {
@@ -329,15 +517,25 @@ void LSMStore::DoCompaction()
 
     TableBuilder builder(table_options_, *io_ctx_, fd);
 
-    for (const auto &kv : merged_map)
-    {
-        if (!kv.second.deleted)
-        {
-            std::string encoded_value;
-            encoded_value.push_back(static_cast<char>(kTypeValue));
-            encoded_value.append(kv.second.value);
-            builder.Add(kv.first, encoded_value);
+    std::string last_key = "";
+    bool first = true;
+
+    while (iter.Valid()) {
+        std::string current_key(iter.key());
+
+        if (first || current_key != last_key) {
+            // New key
+            if (!iter.IsDeleted()) {
+                std::string encoded_value;
+                encoded_value.push_back(static_cast<char>(kTypeValue));
+                encoded_value.append(iter.RealValue());
+                builder.Add(current_key, encoded_value);
+            }
+            last_key = current_key;
+            first = false;
         }
+        
+        iter.Next();
     }
 
     auto     finish_res = builder.Finish();

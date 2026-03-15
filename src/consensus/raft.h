@@ -93,6 +93,9 @@ private:
     // Apply committed log entries to the state machine
     void ApplyCommittedLogs();
 
+    // Group Commit Flusher
+    void FlushProposals();
+
     void BecomeFollower(uint64_t term);
     void BecomeCandidate();
     void BecomeLeader();
@@ -124,6 +127,7 @@ private:
 
     // Client proposal tracking
     std::map<uint64_t, std::promise<bool>> pending_proposals_;
+    std::vector<ClientProposalEvent>       pending_proposals_batch_;
 
     // Thread-safe pipeline ensuring lock-free sequential execution of the state
     // machine

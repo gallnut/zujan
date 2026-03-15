@@ -25,6 +25,8 @@ struct LookupResult
     std::string value;
 };
 
+class SSTableIterator;
+
 class SSTable
 {
 public:
@@ -50,6 +52,8 @@ public:
      */
     std::expected<LookupResult, Error> Get(const ReadOptions &options, std::string_view key, uint64_t seq) noexcept;
 
+    std::unique_ptr<SSTableIterator> NewIterator() const;
+
     void DumpToMap(std::map<std::string, LookupResult> &out_map) const;
 
 private:
@@ -68,9 +72,33 @@ private:
     std::unique_ptr<FilterBlockReader> filter_;
     std::unique_ptr<Block>             index_block_;
 
+    friend class SSTableIterator;
+
     // No copying
     SSTable(const SSTable &) = delete;
     void operator=(const SSTable &) = delete;
+};
+
+class SSTableIterator
+{
+public:
+    explicit SSTableIterator(const SSTable *table);
+    ~SSTableIterator();
+
+    bool Valid() const;
+    void Next();
+    void Seek(std::string_view target);
+    void SeekToFirst();
+    std::string_view key() const;
+    std::string_view value() const;
+
+private:
+    void InitDataBlock();
+
+    const SSTable                   *table_;
+    std::unique_ptr<Block::Iterator> index_iter_;
+    std::unique_ptr<Block>           data_block_;
+    std::unique_ptr<Block::Iterator> data_iter_;
 };
 
 /**

@@ -41,7 +41,7 @@ public:
      * @param memtable The memory table to recover into
      * @return std::expected<void, Error> Success or error status
      */
-    std::expected<void, Error> Recover(MemTable &memtable) noexcept;
+    std::expected<uint64_t, Error> Recover(MemTable &memtable) noexcept;
 
     /**
      * @brief Synchronize the WAL to disk

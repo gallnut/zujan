@@ -249,6 +249,91 @@ void SSTable::DumpToMap(std::map<std::string, LookupResult> &out_map) const
     }
 }
 
+std::unique_ptr<SSTableIterator> SSTable::NewIterator() const
+{
+    return std::make_unique<SSTableIterator>(this);
+}
+
+SSTableIterator::SSTableIterator(const SSTable *table) : table_(table)
+{
+    index_iter_.reset(table_->index_block_->NewIterator());
+    InitDataBlock();
+}
+
+SSTableIterator::~SSTableIterator() = default;
+
+bool SSTableIterator::Valid() const
+{
+    return data_iter_ && data_iter_->Valid();
+}
+
+void SSTableIterator::SeekToFirst()
+{
+    index_iter_->Seek(""); 
+    InitDataBlock();
+}
+
+void SSTableIterator::InitDataBlock()
+{
+    if (!index_iter_->Valid())
+    {
+        data_iter_.reset();
+        data_block_.reset();
+        return;
+    }
+    std::string_view handle = index_iter_->value();
+    uint64_t         block_offset, block_size;
+    const char      *p = handle.data();
+    p = GetVarint64Ptr(p, handle.data() + handle.size(), &block_offset);
+    p = GetVarint64Ptr(p, handle.data() + handle.size(), &block_size);
+
+    auto block_res = table_->ReadBlock(block_offset, block_size);
+    if (block_res)
+    {
+        data_block_ = std::move(*block_res);
+        data_iter_.reset(data_block_->NewIterator());
+        data_iter_->Seek(""); 
+    }
+    else
+    {
+        data_iter_.reset();
+        data_block_.reset();
+    }
+}
+
+void SSTableIterator::Seek(std::string_view target)
+{
+    index_iter_->Seek(target);
+    InitDataBlock();
+    if (data_iter_)
+    {
+        data_iter_->Seek(target);
+    }
+}
+
+void SSTableIterator::Next()
+{
+    if (data_iter_ && data_iter_->Valid())
+    {
+        data_iter_->Next();
+        if (!data_iter_->Valid())
+        {
+            index_iter_->Next();
+            InitDataBlock();
+        }
+    }
+}
+
+std::string_view SSTableIterator::key() const
+{
+    return data_iter_->key();
+}
+
+std::string_view SSTableIterator::value() const
+{
+    return data_iter_->value();
+}
+
 // Manager
 SSTableManager::SSTableManager(IOContext &io_ctx, const TableBuilderOptions &opt) : io_ctx_(io_ctx), options_(opt) {}
 
